@@ -2,16 +2,28 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 
 #include <cereal/access.hpp>
 
+#include "ast/ast.h"
 #include "types.h"
 #include "utils.h"
 
 namespace bpftrace {
 
-struct Bitfield
-{
+static constexpr auto RETVAL_FIELD_NAME = "$retval";
+
+struct Bitfield {
+  Bitfield(size_t byte_offset, size_t bit_width);
+  Bitfield(size_t read_bytes, size_t access_rshift, uint64_t mask)
+      : read_bytes(read_bytes), access_rshift(access_rshift), mask(mask)
+  {
+  }
+  Bitfield() // necessary for serialization
+  {
+  }
+
   bool operator==(const Bitfield &other) const;
   bool operator!=(const Bitfield &other) const;
 
@@ -31,14 +43,12 @@ private:
   }
 };
 
-struct Field
-{
+struct Field {
   std::string name;
   SizedType type;
   ssize_t offset;
 
-  bool is_bitfield;
-  Bitfield bitfield;
+  std::optional<Bitfield> bitfield;
 
   // Used for tracepoint __data_loc's
   //
@@ -51,8 +61,7 @@ struct Field
   bool operator==(const Field &rhs) const
   {
     return name == rhs.name && type == rhs.type && offset == rhs.offset &&
-           is_bitfield == rhs.is_bitfield && bitfield == rhs.bitfield &&
-           is_data_loc == rhs.is_data_loc;
+           bitfield == rhs.bitfield && is_data_loc == rhs.is_data_loc;
   }
 
 private:
@@ -60,14 +69,13 @@ private:
   template <typename Archive>
   void serialize(Archive &archive)
   {
-    archive(name, type, offset, is_bitfield, bitfield, is_data_loc);
+    archive(name, type, offset, bitfield, is_data_loc);
   }
 };
 
 using Fields = std::vector<Field>;
 
-struct Struct
-{
+struct Struct {
   int size = -1; // in bytes
   int align = 1; // in bytes, used for tuples only
   bool padded = false;
@@ -85,20 +93,27 @@ struct Struct
   const Field &GetField(const std::string &name) const;
   void AddField(const std::string &field_name,
                 const SizedType &type,
-                ssize_t offset,
-                bool is_bitfield,
-                const Bitfield &bitfield,
-                bool is_data_loc);
+                ssize_t offset = 0,
+                const std::optional<Bitfield> &bitfield = std::nullopt,
+                bool is_data_loc = false);
   bool HasFields() const;
   void ClearFields();
 
-  static std::unique_ptr<Struct> CreateTuple(std::vector<SizedType> fields);
+  static std::unique_ptr<Struct> CreateRecord(
+      const std::vector<SizedType> &fields,
+      const std::vector<std::string_view> &field_names);
+  static std::unique_ptr<Struct> CreateTuple(
+      const std::vector<SizedType> &fields);
   void Dump(std::ostream &os);
 
   bool operator==(const Struct &rhs) const
   {
     return size == rhs.size && align == rhs.align && padded == rhs.padded &&
            fields == rhs.fields;
+  }
+  bool operator!=(const Struct &rhs) const
+  {
+    return !(*this == rhs);
   }
 
 private:
@@ -116,8 +131,7 @@ std::ostream &operator<<(std::ostream &os, const Fields &t);
 
 namespace std {
 template <>
-struct hash<bpftrace::Struct>
-{
+struct hash<bpftrace::Struct> {
   size_t operator()(const bpftrace::Struct &s) const
   {
     size_t hash = std::hash<int>()(s.size);
@@ -128,8 +142,7 @@ struct hash<bpftrace::Struct>
 };
 
 template <>
-struct hash<shared_ptr<bpftrace::Struct>>
-{
+struct hash<shared_ptr<bpftrace::Struct>> {
   size_t operator()(const std::shared_ptr<bpftrace::Struct> &s_ptr) const
   {
     return std::hash<bpftrace::Struct>()(*s_ptr);
@@ -137,8 +150,7 @@ struct hash<shared_ptr<bpftrace::Struct>>
 };
 
 template <>
-struct equal_to<shared_ptr<bpftrace::Struct>>
-{
+struct equal_to<shared_ptr<bpftrace::Struct>> {
   bool operator()(const std::shared_ptr<bpftrace::Struct> &lhs,
                   const std::shared_ptr<bpftrace::Struct> &rhs) const
   {
@@ -149,24 +161,32 @@ struct equal_to<shared_ptr<bpftrace::Struct>>
 
 namespace bpftrace {
 
-class StructManager
-{
+class StructManager {
 public:
   // struct map manipulation
-  void Add(const std::string &name, size_t size, bool allow_override = true);
+  std::weak_ptr<Struct> Add(const std::string &name,
+                            size_t size,
+                            bool allow_override = true);
+  void Add(const std::string &name, Struct &&record);
   std::weak_ptr<Struct> Lookup(const std::string &name) const;
   std::weak_ptr<Struct> LookupOrAdd(const std::string &name,
                                     size_t size,
                                     bool allow_override = true);
   bool Has(const std::string &name) const;
 
-  // tuples set manipulation
-  std::weak_ptr<Struct> AddTuple(std::vector<SizedType> fields);
+  std::weak_ptr<Struct> AddAnonymousStruct(
+      const std::vector<SizedType> &fields,
+      const std::vector<std::string_view> &field_names);
+  std::weak_ptr<Struct> AddTuple(const std::vector<SizedType> &fields);
   size_t GetTuplesCnt() const;
+
+  // probe args lookup
+  const Field *GetProbeArg(const ast::Probe &probe,
+                           const std::string &arg_name);
 
 private:
   std::map<std::string, std::shared_ptr<Struct>> struct_map_;
-  std::unordered_set<std::shared_ptr<Struct>> tuples_;
+  std::unordered_set<std::shared_ptr<Struct>> anonymous_types_;
 };
 
 } // namespace bpftrace

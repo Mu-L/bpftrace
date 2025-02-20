@@ -7,12 +7,14 @@ namespace codegen {
 
 TEST(codegen, builtin_probe)
 {
-  auto bpftrace = get_mock_bpftrace();
+  test("tracepoint:sched:sched_one { @x = probe }", NAME);
+}
 
-  test(*bpftrace,
-       "tracepoint:sched:sched_one { @x = probe }",
-
-       NAME);
+TEST(codegen, builtin_probe_comparison)
+{
+  test(
+      R"(tracepoint:sched:sched_one { if (probe == "tracepoint:sched:sched_one") {} })",
+      NAME);
 }
 
 } // namespace codegen

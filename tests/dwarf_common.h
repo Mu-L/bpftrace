@@ -1,37 +1,37 @@
 #pragma once
 
-#include "data/dwarf_data.h"
+#include <sys/stat.h>
+
+#include <cstdio>
 #include <fcntl.h>
+#include <fstream>
+#include <stdexcept>
 
-class test_dwarf : public ::testing::Test
-{
+#include "data/dwarf_data.h"
+
+class test_dwarf : public ::testing::Test {
 protected:
-  void SetUp() override
+  static void SetUpTestSuite()
   {
-    char *bin = strdup("/tmp/dwarf_dataXXXXXX");
-    int fd = mkstemp(bin);
-    if (fd < 0)
-      return;
+    std::ofstream file(bin_, std::ios::trunc | std::ios::binary);
+    file.write(reinterpret_cast<const char *>(dwarf_data), dwarf_data_len);
+    file.close();
 
-    fchmod(fd, S_IRUSR | S_IWUSR | S_IXUSR);
+    if (!file)
+      throw std::runtime_error("Failed to create dwarf data file");
 
-    if (write(fd, dwarf_data, dwarf_data_len) != dwarf_data_len)
-    {
-      close(fd);
-      std::remove(bin);
-      return;
-    }
-
-    close(fd);
-    bin_ = bin;
+    // Give executable permissions to everyone
+    int err = chmod(bin_, 0755);
+    if (err)
+      throw std::runtime_error("Failed to chmod dwarf data file: " +
+                               std::to_string(err));
   }
 
-  void TearDown() override
+  static void TearDownTestSuite()
   {
-    if (bin_)
-      std::remove(bin_);
+    std::remove(bin_);
   }
 
-public:
-  char *bin_ = nullptr;
+  static constexpr const char *bin_ = "/tmp/bpftrace-test-dwarf-data";
+  static constexpr const char *cxx_bin_ = dwarf_data_cxx_path;
 };

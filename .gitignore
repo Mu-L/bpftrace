@@ -2,7 +2,6 @@
 build/
 build-*/
 tests/runtime/*.pyc
-tests/data/dwarf_data.h
 .vagrant
 tests/**/*.bc
 *~
@@ -15,4 +14,5 @@ tests/**/*.bc
 [._]sw[a-p]
 *.btaot
 
+result
 ignored/

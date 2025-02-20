@@ -6,10 +6,10 @@
  * USAGE: tcpdrop.bt
  *
  * This is a bpftrace version of the bcc tool of the same name.
- * It is limited to ipv4 addresses, and cannot show tcp flags.
  *
  * This provides information such as packet details, socket state, and kernel
  * stack trace for packets/segments that were dropped via kfree_skb.
+ * It cannot show tcp flags.
  *
  * For Linux 5.17+ (see tools/old for script for lower versions).
  *
@@ -24,7 +24,13 @@
 #include <linux/socket.h>
 #include <net/sock.h>
 #else
-#include <sys/socket.h>
+/*
+ * With BTF providing types, socket headers are not needed.
+ * We only need to supply the preprocessor defines in this script.
+ * AF_INET/AF_INET6 are part of the stable arch-independent Linux ABI
+ */
+#define AF_INET   2
+#define AF_INET6 10
 #endif
 
 BEGIN
@@ -49,8 +55,10 @@ BEGIN
 
 tracepoint:skb:kfree_skb
 {
-  $reason = args->reason;
-  $skb = (struct sk_buff *)args->skbaddr;
+  let $daddr;
+  let $saddr;
+  $reason = args.reason;
+  $skb = (struct sk_buff *)args.skbaddr;
   $sk = ((struct sock *) $skb->sk);
   $inet_family = $sk->__sk_common.skc_family;
 

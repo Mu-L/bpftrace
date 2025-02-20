@@ -5,8 +5,7 @@
 
 #include "ast/irbuilderbpf.h"
 
-namespace bpftrace {
-namespace AsyncEvent {
+namespace bpftrace::AsyncEvent {
 
 std::vector<llvm::Type*> Print::asLLVMType(ast::IRBuilderBPF& b)
 {
@@ -47,15 +46,16 @@ std::vector<llvm::Type*> Time::asLLVMType(ast::IRBuilderBPF& b)
 std::vector<llvm::Type*> Strftime::asLLVMType(ast::IRBuilderBPF& b)
 {
   return {
-    b.getInt64Ty(), // strftime id
-    b.getInt64Ty(), // strftime arg, time elapsed since boot
+    b.getInt32Ty(), // strftime id
+    b.getInt32Ty(), // timestamp mode
+    b.getInt64Ty(), // strftime arg, nanoseconds
   };
 }
 
-std::vector<llvm::Type*> Buf::asLLVMType(ast::IRBuilderBPF& b, size_t length)
+std::vector<llvm::Type*> Buf::asLLVMType(ast::IRBuilderBPF& b, uint32_t length)
 {
   return {
-    b.getInt8Ty(),                               // buffer length
+    b.getInt32Ty(),                              // buffer length
     llvm::ArrayType::get(b.getInt8Ty(), length), // buffer content
   };
 }
@@ -103,5 +103,12 @@ std::vector<llvm::Type*> SkbOutput::asLLVMType(ast::IRBuilderBPF& b)
   };
 }
 
-} // namespace AsyncEvent
-} // namespace bpftrace
+std::vector<llvm::Type*> Exit::asLLVMType(ast::IRBuilderBPF& b)
+{
+  return {
+    b.getInt64Ty(), // asyncid
+    b.getInt8Ty(),  // exit_code
+  };
+}
+
+} // namespace bpftrace::AsyncEvent

@@ -6,8 +6,7 @@
 // SP + 8 points to the first argument that is passed on the stack
 #define ARG0_STACK 8
 
-namespace bpftrace {
-namespace arch {
+namespace bpftrace::arch {
 
 // clang-format off
 static std::array<std::string, 27> registers = {
@@ -98,5 +97,9 @@ std::vector<std::string> invalid_watchpoint_modes()
   };
 }
 
-} // namespace arch
-} // namespace bpftrace
+int get_kernel_ptr_width()
+{
+  return 64;
+}
+
+} // namespace bpftrace::arch

@@ -76,8 +76,7 @@ static std::array<std::string, ARG_REGISTERS> arg_registers = {
 
 int offset(std::string reg_name)
 {
-  for (unsigned int i = 0; i < registers.size(); i++)
-  {
+  for (unsigned int i = 0; i < registers.size(); i++) {
     if (registers[i].count(reg_name))
       return i;
   }
@@ -129,8 +128,18 @@ std::string name()
 
 std::vector<std::string> invalid_watchpoint_modes()
 {
-  throw std::runtime_error(
-      "Watchpoints are not supported on this architecture");
+  // See PowerISA Book III v3.1B, Section 5.4.4 and 10.4
+  return std::vector<std::string>{
+    "x",
+    "rx",
+    "wx",
+    "rwx",
+  };
+}
+
+int get_kernel_ptr_width()
+{
+  return 64;
 }
 
 } // namespace arch
