@@ -908,6 +908,7 @@ void SemanticAnalyser::visit(Builtin &builtin)
     builtin.builtin_type = CreateStack(
         false, StackType{ .mode = bpftrace_.config_->stack_mode });
   } else if (builtin.ident == "comm") {
+    constexpr int COMM_SIZE = 16;
     builtin.builtin_type = CreateString(COMM_SIZE);
     // comm allocated in the bpf stack. See codegen
     // Case: @=comm and strncmp(@, "name")
@@ -1776,6 +1777,7 @@ void SemanticAnalyser::check_stack_call(Call &call, bool kernel)
       call.addError() << "Invalid number of arguments";
       break;
   }
+  constexpr int MAX_STACK_SIZE = 1024;
   if (stack_type.limit > MAX_STACK_SIZE) {
     call.addError() << call.func << "([int limit]): limit shouldn't exceed "
                     << MAX_STACK_SIZE << ", " << stack_type.limit << " given";
@@ -1816,12 +1818,6 @@ void SemanticAnalyser::validate_map_key(const SizedType &key, Node &node)
 
 void SemanticAnalyser::visit(MapDeclStatement &decl)
 {
-  if (!bpftrace_.config_->unstable_map_decl) {
-    decl.addError() << "Map declarations are not enabled by default. To enable "
-                       "this unstable feature, set this config flag to 1 "
-                       "e.g. unstable_map_decl=1";
-  }
-
   const auto bpf_type = get_bpf_map_type(decl.bpf_type);
   if (!bpf_type) {
     auto &err = decl.addError();

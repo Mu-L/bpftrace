@@ -208,16 +208,15 @@ std::optional<Block *> MacroExpander::expand(Macro &macro, const Call &call)
   }
 
   for (auto expr : macro.block->stmts) {
-    stmt_list.push_back(clone(ast_, expr, expr.loc()));
+    stmt_list.push_back(clone(ast_, expr, call.loc));
   }
 
   auto *cloned_block =
       macro.block->expr.has_value()
-          ? ast_.make_node<Block>(
-                std::move(stmt_list),
-                clone(ast_, *macro.block->expr, macro.block->expr->loc()),
-                Location(macro.loc))
-          : ast_.make_node<Block>(std::move(stmt_list), Location(macro.loc));
+          ? ast_.make_node<Block>(std::move(stmt_list),
+                                  clone(ast_, *macro.block->expr, call.loc),
+                                  Location(macro.loc))
+          : ast_.make_node<Block>(std::move(stmt_list), Location(call.loc));
 
   visit(cloned_block);
 
@@ -261,17 +260,7 @@ void MacroCollection::visit(Expression &expr)
 
 void MacroCollection::collect_macros()
 {
-  bool unstable_macro = bpftrace_.config_->unstable_macro;
-
   for (Macro *macro : ast_.root->macros) {
-    if (!unstable_macro) {
-      macro->addError()
-          << "Hygienic macros are not enabled by default. To enable "
-             "this unstable feature, set the 'unstable_macro' config flag to 1 "
-             "e.g. unstable_macro=1";
-      return;
-    }
-
     if (macros_.contains(macro->name)) {
       macro->addError() << "Redifinition of macro: " << macro->name;
       return;

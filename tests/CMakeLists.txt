@@ -61,6 +61,7 @@ add_executable(bpftrace_test
   temp.cpp
   tracepoint_format_parser.cpp
   types.cpp
+  unstable_feature.cpp
   utils.cpp
 
   ${CODEGEN_SRC}
@@ -68,7 +69,7 @@ add_executable(bpftrace_test
 add_test(NAME bpftrace_test COMMAND bpftrace_test)
 
 add_subdirectory(data)
-add_dependencies(bpftrace_test data_source_dwarf data_source_btf data_source_funcs)
+add_dependencies(bpftrace_test data_source_dwarf data_source_btf data_source_funcs parser)
 target_include_directories(bpftrace_test PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(bpftrace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
