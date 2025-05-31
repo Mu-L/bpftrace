@@ -1,16 +1,17 @@
 #include "ast/irbuilderbpf.h"
 
-#include <llvm/IR/DataLayout.h>
-#include <llvm/IR/Module.h>
-
 #include "arch/arch.h"
 #include "ast/async_event_types.h"
 #include "ast/codegen_helper.h"
+#include "async_action.h"
 #include "bpfmap.h"
 #include "bpftrace.h"
 #include "globalvars.h"
 #include "log.h"
 #include "util/exceptions.h"
+#include <filesystem>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/Module.h>
 
 namespace libbpf {
 #include "libbpf/bpf.h"
@@ -1109,9 +1110,10 @@ void IRBuilderBPF::CreateMapUpdateElem(const std::string &map_ident,
   CreateHelperErrorCond(call, libbpf::BPF_FUNC_map_update_elem, loc);
 }
 
-void IRBuilderBPF::CreateMapDeleteElem(Map &map,
-                                       Value *key,
-                                       const Location &loc)
+CallInst *IRBuilderBPF::CreateMapDeleteElem(Map &map,
+                                            Value *key,
+                                            bool ret_val_discarded,
+                                            const Location &loc)
 {
   assert(key->getType()->isPointerTy());
   Value *map_ptr = GetMapVar(map.ident);
@@ -1127,7 +1129,10 @@ void IRBuilderBPF::CreateMapDeleteElem(Map &map,
       delete_func_ptr_type);
   CallInst *call = createCall(
       delete_func_type, delete_func, { map_ptr, key }, "delete_elem");
-  CreateHelperErrorCond(call, libbpf::BPF_FUNC_map_delete_elem, loc);
+  CreateHelperErrorCond(
+      call, libbpf::BPF_FUNC_map_delete_elem, loc, !ret_val_discarded);
+
+  return call;
 }
 
 Value *IRBuilderBPF::CreateForEachMapElem(Map &map,
@@ -1223,8 +1228,7 @@ void IRBuilderBPF::CreateCheckSetRecursion(const Location &loc,
   // Most of the time this will happen for the functions that can lead
   // to a crash e.g. "queued_spin_lock_slowpath" but it can also happen
   // for nested probes e.g. "page_fault_user" -> "print".
-  CreateAtomicIncCounter(to_string(MapType::EventLossCounter),
-                         bpftrace::BPFtrace::event_loss_cnt_key_);
+  CreateIncEventLossCounter();
   CreateRet(getInt64(early_exit_ret));
 
   SetInsertPoint(lookup_failure_block);
@@ -1464,8 +1468,12 @@ Value *IRBuilderBPF::CreateUSDTReadArgument(Value *ctx,
   void *usdt;
 
   if (pid.has_value()) {
-    // FIXME use attach_point->target when iovisor/bcc#2064 is merged
-    usdt = bcc_usdt_new_frompid(*pid, nullptr);
+    if (!attach_point->target.empty()) {
+      auto real_path = std::filesystem::absolute(attach_point->target).string();
+      usdt = bcc_usdt_new_frompid(*pid, real_path.c_str());
+    } else {
+      usdt = bcc_usdt_new_frompid(*pid, nullptr);
+    };
   } else {
     usdt = bcc_usdt_new_frompath(attach_point->target.c_str());
   }
@@ -2130,50 +2138,21 @@ void IRBuilderBPF::CreateRingbufOutput(Value *data,
   CreateCondBr(condition, loss_block, merge_block);
 
   SetInsertPoint(loss_block);
-  CreateAtomicIncCounter(to_string(MapType::EventLossCounter),
-                         bpftrace::BPFtrace::event_loss_cnt_key_);
+  CreateIncEventLossCounter();
   CreateBr(merge_block);
 
   SetInsertPoint(merge_block);
 }
 
-void IRBuilderBPF::CreateAtomicIncCounter(const std::string &map_name,
-                                          uint32_t idx)
+void IRBuilderBPF::CreateIncEventLossCounter()
 {
-  AllocaInst *key = CreateAllocaBPF(getInt32Ty(), "key");
-  CreateStore(getInt32(idx), key);
-
-  CallInst *call = createMapLookup(map_name, key);
-  llvm::Function *parent = GetInsertBlock()->getParent();
-  BasicBlock *lookup_success_block = BasicBlock::Create(module_.getContext(),
-                                                        "lookup_success",
-                                                        parent);
-  BasicBlock *lookup_failure_block = BasicBlock::Create(module_.getContext(),
-                                                        "lookup_failure",
-                                                        parent);
-  BasicBlock *lookup_merge_block = BasicBlock::Create(module_.getContext(),
-                                                      "lookup_merge",
-                                                      parent);
-
-  Value *condition = CreateICmpNE(CreateIntCast(call, getPtrTy(), true),
-                                  GetNull(),
-                                  "map_lookup_cond");
-  CreateCondBr(condition, lookup_success_block, lookup_failure_block);
-
-  SetInsertPoint(lookup_success_block);
+  auto *global_event_loss_counter = module_.getGlobalVariable(
+      to_string(bpftrace::globalvars::GlobalVar::EVENT_LOSS_COUNTER));
   CREATE_ATOMIC_RMW(AtomicRMWInst::BinOp::Add,
-                    call,
+                    global_event_loss_counter,
                     getInt64(1),
                     8,
                     AtomicOrdering::SequentiallyConsistent);
-  CreateBr(lookup_merge_block);
-
-  SetInsertPoint(lookup_failure_block);
-  // ignore lookup failure
-  CreateBr(lookup_merge_block);
-
-  SetInsertPoint(lookup_merge_block);
-  CreateLifetimeEnd(key);
 }
 
 void IRBuilderBPF::CreatePerCpuMapElemInit(Map &map,
@@ -2473,7 +2452,8 @@ void IRBuilderBPF::CreateHelperError(Value *return_value,
                                                   true);
   AllocaInst *buf = CreateAllocaBPF(helper_error_struct, "helper_error_t");
   CreateStore(
-      GetIntSameSize(static_cast<int64_t>(AsyncAction::helper_error),
+      GetIntSameSize(static_cast<int64_t>(
+                         async_action::AsyncAction::helper_error),
                      elements.at(0)),
       CreateGEP(helper_error_struct, buf, { getInt64(0), getInt32(0) }));
   CreateStore(
@@ -2489,14 +2469,12 @@ void IRBuilderBPF::CreateHelperError(Value *return_value,
   CreateLifetimeEnd(buf);
 }
 
-// Report error if a return value < 0 (or return value == 0 if compare_zero is
-// true)
 void IRBuilderBPF::CreateHelperErrorCond(Value *return_value,
                                          libbpf::bpf_func_id func_id,
                                          const Location &loc,
-                                         bool compare_zero)
+                                         bool suppress_error)
 {
-  if (bpftrace_.helper_check_level_ == 0 ||
+  if (bpftrace_.helper_check_level_ == 0 || suppress_error ||
       (bpftrace_.helper_check_level_ == 1 && return_zero_if_err(func_id)))
     return;
 
@@ -2511,11 +2489,7 @@ void IRBuilderBPF::CreateHelperErrorCond(Value *return_value,
   // return int and we need to use Int32Ty value to check if a return
   // value is negative. TODO: use Int32Ty as a return type
   auto *ret = CreateIntCast(return_value, getInt32Ty(), true);
-  Value *condition;
-  if (compare_zero)
-    condition = CreateICmpNE(ret, Constant::getNullValue(ret->getType()));
-  else
-    condition = CreateICmpSGE(ret, Constant::getNullValue(ret->getType()));
+  Value *condition = CreateICmpSGE(ret, Constant::getNullValue(ret->getType()));
   CreateCondBr(condition, helper_merge_block, helper_failure_block);
   SetInsertPoint(helper_failure_block);
   CreateHelperError(ret, func_id, loc);

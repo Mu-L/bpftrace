@@ -55,7 +55,10 @@ public:
                            Value *val,
                            const Location &loc,
                            int64_t flags = 0);
-  void CreateMapDeleteElem(Map &map, Value *key, const Location &loc);
+  CallInst *CreateMapDeleteElem(Map &map,
+                                Value *key,
+                                bool ret_val_discarded,
+                                const Location &loc);
   Value *CreateForEachMapElem(Map &map,
                               Value *callback,
                               Value *callback_ctx,
@@ -163,7 +166,7 @@ public:
                        const Twine &Name);
   void CreateGetCurrentComm(AllocaInst *buf, size_t size, const Location &loc);
   void CreateOutput(Value *data, size_t size, const Location &loc);
-  void CreateAtomicIncCounter(const std::string &map_name, uint32_t idx);
+  void CreateIncEventLossCounter();
   void CreatePerCpuMapElemInit(Map &map,
                                Value *key,
                                Value *val,
@@ -187,7 +190,7 @@ public:
   void CreateHelperErrorCond(Value *return_value,
                              libbpf::bpf_func_id func_id,
                              const Location &loc,
-                             bool compare_zero = false);
+                             bool suppress_error = false);
   StructType *GetStackStructType(bool is_ustack);
   StructType *GetStructType(const std::string &name,
                             const std::vector<llvm::Type *> &elements,
